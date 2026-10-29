@@ -20,7 +20,7 @@ BASE_CURRENCY = "PLN"
 FX_TICKERS = {"EUR": "EURPLN=X", "USD": "USDPLN=X", "GBP": "GBPPLN=X", "CHF": "CHFPLN=X", "PLN": None}
 
 st.title("📈 Income Investor AI")
-st.caption("MVP 0.2 · Wzrost kapitału i reinwestowanie dywidend · dostęp z iPada")
+st.caption("MVP 0.3 · Panel kapitału, wycena w PLN i reinwestowanie dywidend · dostęp z iPada")
 st.info("Prototyp edukacyjny, nie porada inwestycyjna. Dane z Yahoo Finance przez yfinance mogą być opóźnione, niekompletne lub błędne. Aplikacja nie łączy się z kontem XTB i nie wykonuje transakcji.")
 
 with st.sidebar:
@@ -30,7 +30,7 @@ with st.sidebar:
     st.caption("Dane pobierane są na żądanie. Aplikacja nie działa automatycznie w tle.")
     st.markdown("**Waluta bazowa portfela: PLN**")
 
-tab_today, tab_portfolio, tab_div, tab_method, tab_sources = st.tabs(["Briefing", "Portfel XTB", "Dywidendy i reinwestowanie", "Metodyka i ryzyko", "Źródła i ograniczenia"])
+tab_dashboard, tab_today, tab_portfolio, tab_div, tab_method, tab_sources = st.tabs(["Panel kapitału", "Briefing", "Portfel XTB", "Dywidendy i reinwestowanie", "Metodyka i ryzyko", "Źródła i ograniczenia"])
 
 def safe_num(value):
     try:
@@ -103,6 +103,36 @@ def preliminary_status(row):
     if row.get("sma200") is not None and row.get("price") is not None and row["price"] > row["sma200"] and r6 is not None and r6 > 0:
         return "Pozytywne momentum — sprawdź fundamenty"
     return "Obserwuj — brak jednoznacznego sygnału"
+
+with tab_dashboard:
+    st.subheader("Panel kapitału — PLN")
+    st.write("Zbiorczy widok wartości portfela, wyniku i historycznych wypłat dywidend. Najpierw wczytaj CSV w zakładce Portfel XTB.")
+    saved = st.session_state.get("portfolio_valuation")
+    if isinstance(saved, pd.DataFrame) and not saved.empty and "Wartość teraz [PLN]" in saved.columns:
+        valid_saved = saved[saved["Wartość teraz [PLN]"].notna()].copy()
+        if not valid_saved.empty:
+            total_value = safe_num(valid_saved["Wartość teraz [PLN]"].sum())
+            total_pnl = safe_num(valid_saved["Wynik [PLN, przybliżony]"].sum()) if "Wynik [PLN, przybliżony]" in valid_saved else None
+            total_div = safe_num(valid_saved["Dywidenda roczna [PLN, szacunek]"].sum(min_count=1)) if "Dywidenda roczna [PLN, szacunek]" in valid_saved else None
+            total_cost_pln = safe_num((valid_saved["Koszt zakupu [waluta]"] * valid_saved["Kurs PLN"]).sum()) if "Koszt zakupu [waluta]" in valid_saved and "Kurs PLN" in valid_saved else None
+            a, b, c, d = st.columns(4)
+            a.metric("Wartość portfela", fmt_pln(total_value))
+            b.metric("Wynik przybliżony", fmt_pln(total_pnl))
+            c.metric("Szacowane dywidendy 12M", fmt_pln(total_div))
+            d.metric("Wartość dywidend / portfel", f"{total_div / total_value * 100:.2f}%" if total_div is not None and total_value and total_value > 0 else "—")
+            if "Ticker" in valid_saved:
+                st.markdown("**Udział pozycji w wartości portfela**")
+                allocation = valid_saved.groupby("Ticker", as_index=False)["Wartość teraz [PLN]"].sum().sort_values("Wartość teraz [PLN]", ascending=False)
+                allocation["Udział portfela %"] = allocation["Wartość teraz [PLN]"] / total_value * 100 if total_value else 0
+                st.bar_chart(allocation.set_index("Ticker")["Udział portfela %"])
+                st.dataframe(allocation.rename(columns={"Ticker":"Ticker", "Wartość teraz [PLN]":"Wartość [PLN]"}), use_container_width=True, hide_index=True)
+            st.caption("Dane pochodzą z ostatniej wyceny wykonanej w zakładce Portfel XTB. Wynik w PLN jest przybliżony, bo koszt zakupu przeliczany jest po bieżącym, a nie historycznym kursie waluty.")
+        else:
+            st.info("Nie ma jeszcze poprawnie wycenionych pozycji. Przejdź do Portfel XTB i wczytaj plik CSV.")
+    else:
+        st.info("Panel czeka na wycenę portfela. Otwórz Portfel XTB i wczytaj testowy lub własny plik CSV, aby wypełnić ten widok.")
+    st.markdown("**Ważne rozróżnienie**")
+    st.write("ETF akumulujący, taki jak VWCE, reinwestuje dochody wewnątrz funduszu i zwykle nie wypłaca ich inwestorowi gotówką. Dlatego dywidenda gotówkowa może wynosić 0, mimo że dochody z aktywów bazowych wpływają na wartość funduszu. Nie porównuj wyłącznie gotówkowej stopy dywidendy — patrz na całkowity zwrot.")
 
 with tab_today:
     st.subheader("Briefing rynkowy")
@@ -189,6 +219,7 @@ with tab_portfolio:
                     out = pd.DataFrame(rows)
                     valid = out[out.get("Wartość teraz [PLN]", pd.Series(index=out.index, dtype=float)).notna()] if "Wartość teraz [PLN]" in out else pd.DataFrame()
                     if not valid.empty:
+                        st.session_state["portfolio_valuation"] = valid.copy()
                         total_value = valid["Wartość teraz [PLN]"].sum()
                         total_div = valid["Dywidenda roczna [PLN, szacunek]"].sum(min_count=1)
                         total_pnl = valid["Wynik [PLN, przybliżony]"].sum()
@@ -210,6 +241,7 @@ with tab_div:
     st.subheader("Dywidendy i reinwestowanie")
     st.write("Moduł szacuje wypłaty na podstawie dywidend odnotowanych w danych za ostatnie 365 dni. Nie jest to gwarancja przyszłych wypłat.")
     st.markdown("**Symulator długoterminowego wzrostu**")
+    st.caption("Możesz porównać dwa scenariusze, zmieniając opcję reinwestowania. Dla uczciwego porównania używaj tej samej założonej stopy całkowitego zwrotu i pamiętaj, że scenariusz nie przewiduje przyszłych wyników.")
     c1, c2 = st.columns(2)
     with c1:
         initial = st.number_input("Kapitał początkowy (PLN)", min_value=0.0, value=20000.0, step=1000.0)
