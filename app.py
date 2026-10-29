@@ -20,7 +20,7 @@ BASE_CURRENCY = "PLN"
 FX_TICKERS = {"EUR": "EURPLN=X", "USD": "USDPLN=X", "GBP": "GBPPLN=X", "CHF": "CHFPLN=X", "PLN": None}
 
 st.title("📈 Income Investor AI")
-st.caption("MVP 0.3 · Panel kapitału, wycena w PLN i reinwestowanie dywidend · dostęp z iPada")
+st.caption("MVP 0.4 · Scenariusze wzrostu kapitału i reinwestowania dywidend · PLN · dostęp z iPada")
 st.info("Prototyp edukacyjny, nie porada inwestycyjna. Dane z Yahoo Finance przez yfinance mogą być opóźnione, niekompletne lub błędne. Aplikacja nie łączy się z kontem XTB i nie wykonuje transakcji.")
 
 with st.sidebar:
@@ -279,6 +279,44 @@ with tab_div:
         st.dataframe(sim, use_container_width=True, hide_index=True)
         st.download_button("Pobierz symulację CSV", sim.to_csv(index=False).encode("utf-8-sig"), file_name="symulacja_reinwestowania.csv", mime="text/csv")
     st.warning("Symulacja jest hipotetyczna. Nie uwzględnia podatków, opłat, inflacji, zmienności stóp zwrotu ani ryzyka walutowego. Nie stanowi prognozy ani obietnicy wyniku.")
+
+    st.divider()
+    st.markdown("### Porównanie trzech scenariuszy: 10, 15 i 20 lat")
+    st.write("Porównujemy trzy przykładowe założenia rocznej stopy całkowitego zwrotu. To scenariusze matematyczne, a nie prognozy rynku. Wszystkie używają tych samych wpłat i tej samej założonej stopy dywidendy.")
+    scenario_years = st.select_slider("Okres porównania", options=[10, 15, 20], value=15, key="scenario_years")
+    div_assumption = st.number_input("Założona roczna stopa dywidendy do porównania (%)", min_value=0.0, max_value=20.0, value=2.0, step=0.5, key="scenario_div_yield")
+
+    def run_scenario(starting, monthly_add, horizon_years, total_return_pct, dividend_pct, reinvest_dividends):
+        balance = float(starting)
+        cash_divs = 0.0
+        contributions = float(starting)
+        monthly_price_rate = ((1 + (total_return_pct if reinvest_dividends else total_return_pct - dividend_pct) / 100) ** (1 / 12)) - 1
+        for _month in range(horizon_years * 12):
+            balance *= (1 + monthly_price_rate)
+            if not reinvest_dividends:
+                cash_divs += max(balance, 0) * (dividend_pct / 100) / 12
+            balance += monthly_add
+            contributions += monthly_add
+        total_wealth = balance + cash_divs
+        return {"Wartość inwestycji [PLN]": balance, "Dywidendy gotówkowe [PLN]": cash_divs,
+                "Łączny majątek [PLN]": total_wealth, "Wpłaty [PLN]": contributions,
+                "Zysk ponad wpłaty [PLN]": total_wealth - contributions}
+
+    if st.button("Porównaj scenariusze", use_container_width=True, key="compare_scenarios"):
+        scenario_rows = []
+        for scenario_name, return_pct in [("Ostrożny", 3.0), ("Bazowy", 6.0), ("Optymistyczny", 9.0)]:
+            reinvest_result = run_scenario(initial, monthly, scenario_years, return_pct, div_assumption, True)
+            cash_result = run_scenario(initial, monthly, scenario_years, return_pct, div_assumption, False)
+            for mode, result in [("Reinwestowanie", reinvest_result), ("Dywidendy wypłacane w gotówce", cash_result)]:
+                scenario_rows.append({"Scenariusz": scenario_name, "Założony całkowity zwrot roczny %": return_pct,
+                    "Wariant": mode, "Okres [lata]": scenario_years, **result})
+        comparison = pd.DataFrame(scenario_rows)
+        st.dataframe(comparison.style.format({c: (lambda x: fmt_pln(x)) for c in ["Wartość inwestycji [PLN]", "Dywidendy gotówkowe [PLN]", "Łączny majątek [PLN]", "Wpłaty [PLN]", "Zysk ponad wpłaty [PLN]"]}), use_container_width=True, hide_index=True)
+        chart_df = comparison.pivot(index="Scenariusz", columns="Wariant", values="Łączny majątek [PLN]")
+        st.markdown("**Łączny majątek na koniec okresu**")
+        st.bar_chart(chart_df)
+        st.download_button("Pobierz porównanie scenariuszy CSV", comparison.to_csv(index=False).encode("utf-8-sig"), file_name="porownanie_scenariuszy.csv", mime="text/csv")
+        st.caption("Uproszczenie: w wariancie gotówkowym przyjęto, że stopa całkowitego zwrotu składa się w przybliżeniu ze wzrostu ceny i wypłacanej dywidendy. Rzeczywiste wypłaty, podatki, koszty, inflacja i zmienność mogą znacząco zmienić wynik.")
 
 with tab_method:
     st.subheader("Metodyka i ryzyko")
